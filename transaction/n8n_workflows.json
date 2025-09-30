@@ -1,0 +1,67 @@
+{
+  "name": "Budget Tracker - Email Parser",
+  "nodes": [
+    {
+      "parameters": {
+        "mailbox": "INBOX",
+        "postProcessAction": "markAsRead",
+        "options": {}
+      },
+      "name": "Email Trigger",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.from.value[0].address}}",
+              "operation": "contains",
+              "value2": "bank"
+            }
+          ]
+        }
+      },
+      "name": "Filter Bank Emails",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.item.json;\nlet body = item.textPlain || item.html || '';\nif (item.html && !item.textPlain) {\n  body = item.html.replace(/<[^>]*>/g, ' ');\n}\nreturn {\n  subject: item.subject || '',\n  body: body,\n  from: item.from?.value?.[0]?.address || ''\n};"
+      },
+      "name": "Prepare Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://in-luv-w-money-2much-production.up.railway.app/webhook/email",
+        "method": "POST",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {}
+      },
+      "name": "Send to Budget Tracker",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Email Trigger": {
+      "main": [[{"node": "Filter Bank Emails", "type": "main", "index": 0}]]
+    },
+    "Filter Bank Emails": {
+      "main": [[{"node": "Prepare Data", "type": "main", "index": 0}]]
+    },
+    "Prepare Data": {
+      "main": [[{"node": "Send to Budget Tracker", "type": "main", "index": 0}]]
+    }
+  }
+}
