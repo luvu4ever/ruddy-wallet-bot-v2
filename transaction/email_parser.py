@@ -11,7 +11,7 @@ class EmailParser:
             raise ValueError("GEMINI_API_KEY must be set")
         
         genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-1.5-flash')
+        self.model = genai.GenerativeModel('gemini-2.0-flash')
     
     def parse_bank_email(self, email_content: str, email_subject: str = "") -> Optional[Dict]:
         """
