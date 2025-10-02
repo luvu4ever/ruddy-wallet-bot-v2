@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import google.generativeai as genai
 from datetime import datetime
 from typing import Dict, Optional
@@ -11,7 +12,16 @@ class EmailParser:
             raise ValueError("GEMINI_API_KEY must be set")
         
         genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-2.0-flash')
+        self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        
+        # Known banks for validation
+        self.known_banks = [
+            'Vietcombank', 'VCB', 'BIDV', 'MB', 'MBBank', 'Techcombank', 'TCB',
+            'VPBank', 'VPB', 'ACB', 'Sacombank', 'STB', 'Agribank', 'AGB',
+            'VietinBank', 'CTG', 'Cake', 'Timo', 'TPBank', 'HDBank', 'SHB',
+            'SeABank', 'MSB', 'VIB', 'OCB', 'Eximbank', 'SCB', 'LienVietPostBank',
+            'BacABank', 'PVcomBank', 'NCB', 'KienlongBank', 'VietBank', 'VietCapitalBank'
+        ]
     
     def parse_bank_email(self, email_content: str, email_subject: str = "") -> Optional[Dict]:
         """
@@ -19,41 +29,85 @@ class EmailParser:
         Returns transaction data in SePay-compatible format
         """
         prompt = f"""
-You are a bank transaction email parser. Extract transaction information from the email below and return ONLY a valid JSON object.
+You are a Vietnamese bank transaction email parser. Extract transaction information and return ONLY a valid JSON object.
+
+IMPORTANT DISTINCTIONS:
+1. **gateway**: This is the BANK that sent the notification (Vietcombank, MB, BIDV, Techcombank, VPBank, ACB, Cake, Timo, etc.)
+   - Look for "MB Bank", "Vietcombank", "Cake by VPBank", "Timo by VPBank" in the sender or header
+   - This is NOT the merchant/receiver
+   
+2. **accountNumber**: YOUR account number at that bank
+   - Usually shown as "Số TK:", "Tài khoản:", "Account:"
+   - This is YOUR account, not the receiver's
+   
+3. **receiver**: The person/merchant you paid to OR who paid you
+   - For payments OUT: Grab, Shopee, Lazada, store names, person names
+   - For money IN: Sender's name or "Unknown" if not specified
+   - Extract from the transaction content/description
+   - DO NOT put bank names here (Cake, Timo are banks, not receivers)
+
+4. **content**: The transaction description
+   - The full description from "Nội dung:", "Content:", "Diễn giải:"
+   - May contain receiver information embedded
 
 Email Subject: {email_subject}
 
 Email Content:
 {email_content}
 
-Extract the following information and return as JSON:
-- gateway: Bank name (Vietcombank, MB, BIDV, Techcombank, VPBank, ACB, etc.)
-- transactionDate: Date and time in format "YYYY-MM-DD HH:MM:SS"
-- accountNumber: The account number (last 3-4 digits if masked)
-- content: Transaction description/content
-- transferType: "in" for money received, "out" for money spent
-- transferAmount: Amount as a number (no currency symbols or commas)
-- accumulated: Account balance after transaction (if available, otherwise null)
-
-Return ONLY the JSON object, no explanation or markdown formatting.
-
-Example output format:
+Extract and return as JSON:
 {{
-  "gateway": "MBBank",
-  "transactionDate": "2025-10-01 14:30:00",
-  "accountNumber": "688619102003",
-  "content": "Thanh toan tai Grab",
-  "transferType": "out",
-  "transferAmount": 45000,
-  "accumulated": 5000000
+  "gateway": "Bank name that sent this notification (MB, Vietcombank, Cake, Timo, etc.)",
+  "transactionDate": "YYYY-MM-DD HH:MM:SS format",
+  "accountNumber": "Your account number at this bank",
+  "receiver": "Who you paid to (Grab, Shopee, etc.) or who paid you. Use 'Unknown' if not clear. NEVER use bank names here.",
+  "content": "Full transaction description",
+  "transferType": "out" for money spent, "in" for money received,
+  "transferAmount": number without commas or symbols,
+  "accumulated": balance after transaction or null if not available
 }}
 
-If you cannot extract the information or this is not a bank transaction email, return:
-{{"error": "Not a valid bank transaction email"}}
+EXAMPLE 1 (Cake Bank - Payment):
+Subject: Thông báo giao dịch Cake
+Body: "Cake by VPBank\nTK: 123456\nThời gian: 01/10/2025 14:30\nSố tiền: -50,000 VND\nNội dung: Thanh toan Grab\nSố dư: 1,000,000"
+
+Correct output:
+{{
+  "gateway": "Cake",
+  "accountNumber": "123456",
+  "receiver": "Grab",
+  "content": "Thanh toan Grab",
+  "transferType": "out",
+  "transferAmount": 50000,
+  ...
+}}
+
+WRONG output (DO NOT DO THIS):
+{{
+  "gateway": "Grab",  ❌ Wrong! Grab is receiver, not bank
+  "receiver": "Cake", ❌ Wrong! Cake is the bank, not receiver
+  ...
+}}
+
+EXAMPLE 2 (MB Bank - Receive money):
+Body: "MB Bank\nTK: 688619102003\nNhận tiền từ: Nguyen Van A\nSố tiền: +500,000 VND"
+
+Correct output:
+{{
+  "gateway": "MB",
+  "accountNumber": "688619102003",
+  "receiver": "Nguyen Van A",
+  "transferType": "in",
+  "transferAmount": 500000,
+  ...
+}}
+
+Return ONLY the JSON, no markdown formatting or explanation.
+If not a bank transaction email, return: {{"error": "Not a valid bank transaction email"}}
 """
         
         try:
-            print(f"\n🤖 Sending email to Gemini AI for parsing...")
+            print(f"\n🤖 Parsing email with Gemini AI...")
             response = self.model.generate_content(prompt)
             
             # Extract JSON from response
@@ -84,11 +138,24 @@ If you cannot extract the information or this is not a bank transaction email, r
                     print(f"❌ Missing required field: {field}")
                     return None
             
+            # Post-processing validation: Check if gateway is a known bank
+            gateway = parsed_data.get("gateway", "")
+            if not any(bank.lower() in gateway.lower() for bank in self.known_banks):
+                print(f"⚠️ Warning: '{gateway}' might not be a valid bank name")
+            
+            # Check if receiver is accidentally a bank name
+            receiver = parsed_data.get("receiver", "")
+            if receiver and any(bank.lower() == receiver.lower() for bank in self.known_banks):
+                print(f"⚠️ Warning: Receiver '{receiver}' looks like a bank name - setting to Unknown")
+                parsed_data["receiver"] = "Unknown"
+            
             # Add default values for optional fields
             if "accountNumber" not in parsed_data:
                 parsed_data["accountNumber"] = "Unknown"
             if "accumulated" not in parsed_data:
                 parsed_data["accumulated"] = None
+            if "receiver" not in parsed_data:
+                parsed_data["receiver"] = "Unknown"
             if "code" not in parsed_data:
                 parsed_data["code"] = None
             if "subAccount" not in parsed_data:
@@ -96,13 +163,15 @@ If you cannot extract the information or this is not a bank transaction email, r
             if "referenceCode" not in parsed_data:
                 parsed_data["referenceCode"] = None
             if "description" not in parsed_data:
-                parsed_data["description"] = email_content[:500]  # First 500 chars
+                parsed_data["description"] = email_content[:500]
             
             # Add unique ID (timestamp-based)
             parsed_data["id"] = int(datetime.now().timestamp() * 1000)
             
             print(f"✅ Successfully parsed transaction:")
-            print(f"   Bank: {parsed_data['gateway']}")
+            print(f"   Bank (gateway): {parsed_data['gateway']}")
+            print(f"   Account: {parsed_data['accountNumber']}")
+            print(f"   Receiver: {parsed_data['receiver']}")
             print(f"   Amount: {parsed_data['transferAmount']:,.0f} VND")
             print(f"   Type: {parsed_data['transferType']}")
             
@@ -110,43 +179,8 @@ If you cannot extract the information or this is not a bank transaction email, r
             
         except json.JSONDecodeError as e:
             print(f"❌ Failed to parse JSON from Gemini response: {e}")
-            print(f"Response was: {response_text}")
+            print(f"Response was: {response_text[:500]}")
             return None
         except Exception as e:
             print(f"❌ Error parsing email with Gemini: {e}")
             return None
-
-
-# Test the parser
-if __name__ == "__main__":
-    from dotenv import load_dotenv
-    load_dotenv()
-    
-    parser = EmailParser()
-    
-    # Test with sample email
-    sample_email = """
-    Thông báo biến động số dư tài khoản
-    
-    Kính gửi Quý khách,
-    
-    MB Bank xin thông báo tài khoản của Quý khách có giao dịch như sau:
-    
-    - Số tài khoản: 688619102003
-    - Thời gian: 01/10/2025 14:30:00
-    - Loại giao dịch: Chuyển tiền
-    - Số tiền: -500,000 VND
-    - Nội dung: Thanh toan Grab
-    - Số dư: 5,000,000 VND
-    
-    Trân trọng,
-    MB Bank
-    """
-    
-    result = parser.parse_bank_email(sample_email, "Thông báo giao dịch")
-    
-    if result:
-        print("\n=== Parsed Transaction ===")
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-    else:
-        print("\n❌ Failed to parse email")
