@@ -1,7 +1,7 @@
 import os
 from datetime import datetime
 from supabase import create_client, Client
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 class TransactionProcessor:
     def __init__(self):
@@ -12,11 +12,15 @@ class TransactionProcessor:
             raise ValueError("SUPABASE_URL and SUPABASE_SERVICE_KEY must be set")
         
         self.supabase: Client = create_client(supabase_url, supabase_key)
+        
+        # Cache for known receivers to reduce database calls
+        self._receiver_cache = None
+        self._cache_timestamp = None
+        self._cache_ttl = 300  # Cache for 5 minutes
     
     def get_account_name(self, gateway: str) -> str:
         """
         Convert gateway name to simplified account name
-        You can customize this mapping based on your banks
         """
         gateway_mapping = {
             "Vietcombank": "VCB",
@@ -31,17 +35,14 @@ class TransactionProcessor:
             "VietinBank": "CTG"
         }
         
-        # Return mapped value or original gateway name
         return gateway_mapping.get(gateway, gateway)
     
     def parse_sepay_transaction(self, sepay_data: Dict) -> Dict:
         """
         Parse transaction data from SePay webhook
         """
-        # Convert transaction date to ISO format
         transaction_date = sepay_data.get("transactionDate")
         if transaction_date:
-            # SePay format: "2023-03-25 14:02:37"
             try:
                 dt = datetime.strptime(transaction_date, "%Y-%m-%d %H:%M:%S")
                 transaction_date = dt.isoformat()
@@ -50,7 +51,6 @@ class TransactionProcessor:
         else:
             transaction_date = datetime.now().isoformat()
         
-        # Get gateway and convert to account name
         gateway = sepay_data.get("gateway", "Unknown")
         account = self.get_account_name(gateway)
         
@@ -67,38 +67,72 @@ class TransactionProcessor:
         }
         return transaction
     
-    def categorize_by_content(self, content: str) -> str:
+    def _load_known_receivers(self) -> List[Dict]:
         """
-        Check if transaction content matches any known receiver pattern
-        Returns category or 'Uncategorized'
+        Load known receivers from database with caching
         """
-        if not content:
-            return "Uncategorized"
+        current_time = datetime.now().timestamp()
         
-        content_lower = content.lower()
+        # Return cached data if still valid
+        if (self._receiver_cache is not None and 
+            self._cache_timestamp is not None and 
+            current_time - self._cache_timestamp < self._cache_ttl):
+            return self._receiver_cache
         
         try:
-            # Get all known receiver patterns
             response = self.supabase.table("known_receivers").select("*").execute()
-            
-            if response.data:
-                for receiver in response.data:
-                    pattern = receiver["receiver_pattern"].lower()
-                    # Simple substring match
-                    if pattern in content_lower:
-                        return receiver["category"]
-            
-            return "Uncategorized"
+            self._receiver_cache = response.data if response.data else []
+            self._cache_timestamp = current_time
+            return self._receiver_cache
         except Exception as e:
-            print(f"Error checking known receiver: {e}")
+            print(f"⚠️ Error loading known receivers: {e}")
+            return []
+    
+    def categorize_transaction(self, transaction_data: Dict) -> str:
+        """
+        Categorize transaction based on content, description, receiver, and other patterns
+        Checks against known_receivers table patterns
+        """
+        # Combine all text fields for matching
+        text_fields = [
+            transaction_data.get("content", ""),
+            transaction_data.get("description", ""),
+            transaction_data.get("receiver", ""),  # Check receiver field
+            transaction_data.get("code", ""),      # Sometimes receiver info is in code
+        ]
+        
+        # Create combined lowercase text for matching
+        combined_text = " ".join([str(field).lower() for field in text_fields if field])
+        
+        if not combined_text.strip():
             return "Uncategorized"
+        
+        # Load known receivers
+        known_receivers = self._load_known_receivers()
+        
+        if not known_receivers:
+            return "Uncategorized"
+        
+        # Check each pattern
+        for receiver in known_receivers:
+            pattern = receiver.get("receiver_pattern", "").lower().strip()
+            
+            if not pattern:
+                continue
+            
+            # Simple substring match
+            if pattern in combined_text:
+                category = receiver.get("category", "Uncategorized")
+                print(f"✓ Matched pattern: '{pattern}' -> Category: {category}")
+                return category
+        
+        return "Uncategorized"
     
     def transaction_exists(self, transaction_data: Dict) -> bool:
         """
         Check if transaction already exists based on unique characteristics
         """
         try:
-            # Check for duplicate based on: date, amount, account_number, content
             response = self.supabase.table("transactions").select("id").match({
                 "transaction_date": transaction_data["transaction_date"],
                 "transfer_amount": transaction_data["transfer_amount"],
@@ -108,7 +142,7 @@ class TransactionProcessor:
             
             return response.data and len(response.data) > 0
         except Exception as e:
-            print(f"Error checking for duplicate: {e}")
+            print(f"⚠️ Error checking for duplicate: {e}")
             return False
     
     def save_transaction(self, transaction_data: Dict) -> Dict:
@@ -123,8 +157,8 @@ class TransactionProcessor:
                 "duplicate": True
             }
         
-        # Auto-categorize based on content
-        category = self.categorize_by_content(transaction_data.get("content", ""))
+        # Auto-categorize based on patterns
+        category = self.categorize_transaction(transaction_data)
         
         # Prepare data for insertion
         db_data = {
@@ -141,10 +175,9 @@ class TransactionProcessor:
         }
         
         try:
-            # Insert new transaction
             response = self.supabase.table("transactions").insert(db_data).execute()
             
-            print(f"✓ Transaction saved:")
+            print(f"✅ Transaction saved:")
             print(f"  Account: {transaction_data['account']}")
             print(f"  Amount: {transaction_data['transfer_amount']:,.0f} VND")
             print(f"  Type: {transaction_data['transfer_type']}")
@@ -158,7 +191,7 @@ class TransactionProcessor:
                 "category": category
             }
         except Exception as e:
-            print(f"✗ Error saving transaction: {e}")
+            print(f"❌ Error saving transaction: {e}")
             return {
                 "success": False,
                 "error": str(e)
@@ -173,70 +206,17 @@ class TransactionProcessor:
             result = self.save_transaction(parsed)
             return result
         except Exception as e:
-            print(f"✗ Error processing webhook: {e}")
+            print(f"❌ Error processing webhook: {e}")
             return {
                 "success": False,
                 "error": str(e)
             }
-
-
-# Test the processor
-if __name__ == "__main__":
-    # Load environment variables from .env file for local testing
-    from dotenv import load_dotenv
-    load_dotenv()
     
-    processor = TransactionProcessor()
-    
-    # Test with sample SePay data from different banks
-    sample_transactions = [
-        {
-            "id": 92704,
-            "gateway": "Vietcombank",
-            "transactionDate": "2025-09-30 14:02:37",
-            "accountNumber": "0123499999",
-            "code": None,
-            "content": "chuyen tien mua iphone",
-            "transferType": "out",
-            "transferAmount": 2277000,
-            "accumulated": 19077000,
-            "subAccount": None,
-            "referenceCode": "MBVCB.3278907687",
-            "description": ""
-        },
-        {
-            "id": 92705,
-            "gateway": "MB",
-            "transactionDate": "2025-09-30 15:30:00",
-            "accountNumber": "9876543210",
-            "code": None,
-            "content": "Di cho mua com",
-            "transferType": "out",
-            "transferAmount": 150000,
-            "accumulated": 5000000,
-            "subAccount": None,
-            "referenceCode": "MB123456",
-            "description": ""
-        },
-        {
-            "id": 92706,
-            "gateway": "BIDV",
-            "transactionDate": "2025-09-30 16:00:00",
-            "accountNumber": "1122334455",
-            "code": None,
-            "content": "Nhan luong thang 9",
-            "transferType": "in",
-            "transferAmount": 15000000,
-            "accumulated": 20000000,
-            "subAccount": None,
-            "referenceCode": "BIDV789",
-            "description": ""
-        }
-    ]
-    
-    print("\n=== Testing Transaction Processor ===\n")
-    for transaction in sample_transactions:
-        result = processor.process_sepay_webhook(transaction)
-        print(f"Result: {result.get('message')}")
-        print(f"Category: {result.get('category', 'N/A')}")
-        print("-" * 50)
+    def refresh_receiver_cache(self):
+        """
+        Manually refresh the known receivers cache
+        Useful after adding new patterns to the database
+        """
+        self._receiver_cache = None
+        self._cache_timestamp = None
+        print("🔄 Receiver cache cleared")
