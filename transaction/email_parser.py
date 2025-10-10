@@ -13,11 +13,36 @@ class EmailParser:
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel('gemini-2.0-flash')
     
+    def fix_mojibake(self, text: str) -> str:
+        """
+        Fix mojibake encoding issues in Vietnamese text using ftfy
+        """
+        if not text:
+            return text
+        
+        try:
+            import ftfy
+            fixed = ftfy.fix_text(text)
+            return fixed
+        except ImportError:
+            print(f"⚠️ ftfy not installed. Install with: pip install ftfy")
+            return text
+        except Exception as e:
+            print(f"⚠️ Error fixing encoding: {e}")
+            return text
+    
     def parse_bank_email(self, email_content: str, email_subject: str = "") -> Optional[Dict]:
         """
         Parse bank transaction email using Gemini AI
         Returns transaction data in SePay-compatible format
         """
+        # Fix encoding issues first
+        email_content = self.fix_mojibake(email_content)
+        email_subject = self.fix_mojibake(email_subject)
+        
+        print(f"\n📧 Fixed email content preview:")
+        print(email_content[:200] + "..." if len(email_content) > 200 else email_content)
+        
         prompt = f"""
 You are a bank transaction email parser. Extract transaction information from the email below and return ONLY a valid JSON object.
 
@@ -27,25 +52,27 @@ Email Content:
 {email_content}
 
 Extract the following information and return as JSON:
-- gateway: Bank name (Vietcombank, MB, BIDV, Techcombank, VPBank, ACB, etc.)
+- gateway: Bank name (Vietcombank, MB, BIDV, Techcombank, VPBank, ACB, Cake, etc.)
 - transactionDate: Date and time in format "YYYY-MM-DD HH:MM:SS"
-- accountNumber: The account number (last 3-4 digits if masked)
+- accountNumber: The account number (sender account)
 - content: Transaction description/content
-- transferType: "in" for money received, "out" for money spent
+- transferType: "in" for money received, "out" for money spent/transferred
 - transferAmount: Amount as a number (no currency symbols or commas)
 - accumulated: Account balance after transaction (if available, otherwise null)
+- receiver: The receiver name or account if this is a transfer out
 
 Return ONLY the JSON object, no explanation or markdown formatting.
 
 Example output format:
 {{
-  "gateway": "MBBank",
-  "transactionDate": "2025-10-01 14:30:00",
-  "accountNumber": "688619102003",
-  "content": "Thanh toan tai Grab",
+  "gateway": "Cake",
+  "transactionDate": "2025-10-08 21:14:13",
+  "accountNumber": "0986381568",
+  "content": "Chuyen tien ngoai CAKE",
   "transferType": "out",
-  "transferAmount": 45000,
-  "accumulated": 5000000
+  "transferAmount": 28000,
+  "accumulated": null,
+  "receiver": "PHAN THE ANH"
 }}
 
 If you cannot extract the information or this is not a bank transaction email, return:
@@ -124,23 +151,9 @@ if __name__ == "__main__":
     
     parser = EmailParser()
     
-    # Test with sample email
+    # Test with your actual mojibake text
     sample_email = """
-    Thông báo biến động số dư tài khoản
-    
-    Kính gửi Quý khách,
-    
-    MB Bank xin thông báo tài khoản của Quý khách có giao dịch như sau:
-    
-    - Số tài khoản: 688619102003
-    - Thời gian: 01/10/2025 14:30:00
-    - Loại giao dịch: Chuyển tiền
-    - Số tiền: -500,000 VND
-    - Nội dung: Thanh toan Grab
-    - Số dư: 5,000,000 VND
-    
-    Trân trọng,
-    MB Bank
+    Chào MAI VIẾT DŨNG Cake xin thông báo tài khoản của bạn vừa mới phát sinh giao dịch như sau: Thông tin tài khoản Tài khoản chuyển 0986381568 - Tài khoản thanh toán Tài khoản nhận VQRQADDBO8746 Tên người nhận PHAN THE ANH Ngân hàng nhận MBBank Thông tin giao dịch Loại giao dịch Chuyển tiền ngoài CAKE Mã giao dịch 323781189 Ngày giờ giao dịch 08/10/2025, 21:14:13 Số tiền -28.000 đ Phí giao dịch 0 đ Nội dung giao dịch
     """
     
     result = parser.parse_bank_email(sample_email, "Thông báo giao dịch")
