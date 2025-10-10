@@ -1,7 +1,7 @@
 import os
 from datetime import datetime
 from supabase import create_client, Client
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Tuple
 
 class TransactionProcessor:
     def __init__(self):
@@ -88,30 +88,34 @@ class TransactionProcessor:
             print(f"⚠️ Error loading known receivers: {e}")
             return []
     
-    def categorize_transaction(self, transaction_data: Dict) -> str:
+    def categorize_and_format_transaction(self, transaction_data: Dict) -> Tuple[str, Optional[str]]:
         """
-        Categorize transaction based on content, description, receiver, and other patterns
-        Checks against known_receivers table patterns
+        Categorize transaction and optionally replace content based on known_receivers patterns
+        
+        Returns:
+            Tuple[str, Optional[str]]: (category, new_content)
+            - category: The matched category or "Uncategorized"
+            - new_content: The replacement content if specified, otherwise None
         """
         # Combine all text fields for matching
         text_fields = [
             transaction_data.get("content", ""),
             transaction_data.get("description", ""),
-            transaction_data.get("receiver", ""),  # Check receiver field
-            transaction_data.get("code", ""),      # Sometimes receiver info is in code
+            transaction_data.get("receiver", ""),
+            transaction_data.get("code", ""),
         ]
         
         # Create combined lowercase text for matching
         combined_text = " ".join([str(field).lower() for field in text_fields if field])
         
         if not combined_text.strip():
-            return "Uncategorized"
+            return "Uncategorized", None
         
         # Load known receivers
         known_receivers = self._load_known_receivers()
         
         if not known_receivers:
-            return "Uncategorized"
+            return "Uncategorized", None
         
         # Check each pattern
         for receiver in known_receivers:
@@ -123,10 +127,16 @@ class TransactionProcessor:
             # Simple substring match
             if pattern in combined_text:
                 category = receiver.get("category", "Uncategorized")
+                new_content = receiver.get("new_content")
+                
                 print(f"✓ Matched pattern: '{pattern}' -> Category: {category}")
-                return category
+                
+                if new_content:
+                    print(f"  📝 Content will be replaced: '{transaction_data.get('content')}' -> '{new_content}'")
+                
+                return category, new_content
         
-        return "Uncategorized"
+        return "Uncategorized", None
     
     def transaction_exists(self, transaction_data: Dict) -> bool:
         """
@@ -147,9 +157,12 @@ class TransactionProcessor:
     
     def save_transaction(self, transaction_data: Dict) -> Dict:
         """
-        Save transaction to database with auto-categorization
+        Save transaction to database with auto-categorization and content replacement
         """
-        # Check if transaction already exists
+        # Store original content for duplicate checking
+        original_content = transaction_data["content"]
+        
+        # Check if transaction already exists (with original content)
         if self.transaction_exists(transaction_data):
             return {
                 "success": True,
@@ -157,8 +170,12 @@ class TransactionProcessor:
                 "duplicate": True
             }
         
-        # Auto-categorize based on patterns
-        category = self.categorize_transaction(transaction_data)
+        # Auto-categorize and get new content if available
+        category, new_content = self.categorize_and_format_transaction(transaction_data)
+        
+        # Replace content if new_content is specified
+        if new_content:
+            transaction_data["content"] = new_content
         
         # Prepare data for insertion
         db_data = {
@@ -166,7 +183,7 @@ class TransactionProcessor:
             "transaction_date": transaction_data["transaction_date"],
             "account_number": transaction_data["account_number"],
             "code": transaction_data.get("code"),
-            "content": transaction_data["content"],
+            "content": transaction_data["content"],  # This will be the new_content if replaced
             "transfer_type": transaction_data["transfer_type"],
             "transfer_amount": transaction_data["transfer_amount"],
             "accumulated": transaction_data.get("accumulated"),
@@ -182,13 +199,16 @@ class TransactionProcessor:
             print(f"  Amount: {transaction_data['transfer_amount']:,.0f} VND")
             print(f"  Type: {transaction_data['transfer_type']}")
             print(f"  Category: {category}")
+            if new_content:
+                print(f"  Content (modified): {transaction_data['content']}")
             
             return {
                 "success": True,
                 "message": "Transaction saved successfully",
                 "duplicate": False,
                 "transaction": response.data[0] if response.data else None,
-                "category": category
+                "category": category,
+                "content_modified": new_content is not None
             }
         except Exception as e:
             print(f"❌ Error saving transaction: {e}")
