@@ -38,7 +38,7 @@ async def category_command(update, context):
 
         # Query transactions for this category in current month
         response = processor.supabase.table("transactions").select(
-            "transaction_date, transfer_amount, transfer_type"
+            "transaction_date, transfer_amount, transfer_type, content"
         ).eq(
             "category", category_name
         ).gte(
@@ -78,7 +78,8 @@ async def category_command(update, context):
                 total_spent += amount
                 expenses.append({
                     "date": txn.get("transaction_date"),
-                    "amount": amount
+                    "amount": amount,
+                    "content": txn.get("content", "")
                 })
 
         # Format response
@@ -100,7 +101,13 @@ async def category_command(update, context):
             for expense in expenses:
                 date_obj = datetime.fromisoformat(expense["date"].replace("Z", "+00:00"))
                 date_str = date_obj.strftime("%d/%m")
-                message += f"  • {date_str}: {expense['amount']:,.0f} VND\n"
+
+                # Show content if it's shorter than 5 words
+                content = expense.get("content", "")
+                if content and len(content.split()) < 5:
+                    message += f"  • {date_str}: {expense['amount']:,.0f} VND - {content}\n"
+                else:
+                    message += f"  • {date_str}: {expense['amount']:,.0f} VND\n"
 
         print(f"✅ Sending response to user")
         await update.message.reply_text(message)
