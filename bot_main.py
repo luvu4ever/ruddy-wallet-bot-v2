@@ -12,7 +12,7 @@ processor = TransactionProcessor()
 
 
 async def list_command(update, context):
-    """Handle /list command - show categories with expenses for current month"""
+    """Handle /list command - show expenses grouped by account type for current month"""
     try:
         print(f"📥 Received /list command from user")
 
@@ -45,8 +45,14 @@ async def list_command(update, context):
             )
             return
 
-        # Calculate expenses by category
-        category_expenses = {}
+        # Get category mappings
+        mapping_response = processor.supabase.table("category_mapping").select("category, account_type").execute()
+        category_map = {row["category"]: row["account_type"] for row in mapping_response.data} if mapping_response.data else {}
+
+        print(f"📋 Loaded {len(category_map)} category mappings")
+
+        # Calculate expenses by account type
+        account_expenses = {}
         total_income = 0
         total_expense = 0
 
@@ -56,9 +62,12 @@ async def list_command(update, context):
             transfer_type = txn.get("transfer_type", "in")
 
             if transfer_type == "out":
-                if category not in category_expenses:
-                    category_expenses[category] = 0
-                category_expenses[category] += amount
+                # Map category to account_type
+                account_type = category_map.get(category, "Uncategorized")
+
+                if account_type not in account_expenses:
+                    account_expenses[account_type] = 0
+                account_expenses[account_type] += amount
                 total_expense += amount
             else:
                 total_income += amount
@@ -66,19 +75,28 @@ async def list_command(update, context):
         # Format response
         message = f"📊 Expense Summary - {now.strftime('%B %Y')}\n\n"
 
-        if not category_expenses:
+        if not account_expenses:
             message += "No expenses recorded this month.\n\n"
         else:
-            sorted_categories = sorted(
-                category_expenses.items(),
-                key=lambda x: x[1],
-                reverse=True
+            # Sort by account type (Need, Fun, Invest, then others)
+            priority = {"Need": 1, "Fun": 2, "Invest": 3}
+            sorted_accounts = sorted(
+                account_expenses.items(),
+                key=lambda x: (priority.get(x[0], 99), -x[1])
             )
 
-            message += "💸 Expenses by Category:\n"
-            for category, amount in sorted_categories:
+            message += "💸 Expenses by Account Type:\n"
+            for account_type, amount in sorted_accounts:
                 percentage = (amount / total_expense * 100) if total_expense > 0 else 0
-                message += f"• {category}: {amount:,.0f} VND ({percentage:.1f}%)\n"
+
+                # Add emoji for each type
+                emoji = {
+                    "Need": "🏠",
+                    "Fun": "🎉",
+                    "Invest": "📈"
+                }.get(account_type, "📦")
+
+                message += f"{emoji} {account_type}: {amount:,.0f} VND ({percentage:.1f}%)\n"
 
         message += f"\n💰 Monthly Summary:\n"
         message += f"• Total Income: {total_income:,.0f} VND\n"
