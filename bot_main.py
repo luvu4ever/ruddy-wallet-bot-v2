@@ -51,8 +51,9 @@ async def list_command(update, context):
 
         print(f"📋 Loaded {len(category_map)} category mappings")
 
-        # Calculate expenses by account type
+        # Calculate expenses by account type and category
         account_expenses = {}
+        account_categories = {}  # Track categories within each account type
         total_income = 0
         total_expense = 0
 
@@ -65,9 +66,18 @@ async def list_command(update, context):
                 # Map category to account_type
                 account_type = category_map.get(category, "Uncategorized")
 
+                # Track account type totals
                 if account_type not in account_expenses:
                     account_expenses[account_type] = 0
+                    account_categories[account_type] = {}
+
                 account_expenses[account_type] += amount
+
+                # Track category totals within account type
+                if category not in account_categories[account_type]:
+                    account_categories[account_type][category] = 0
+                account_categories[account_type][category] += amount
+
                 total_expense += amount
             else:
                 total_income += amount
@@ -96,7 +106,19 @@ async def list_command(update, context):
                     "Invest": "📈"
                 }.get(account_type, "📦")
 
-                message += f"{emoji} {account_type}: {amount:,.0f} VND ({percentage:.1f}%)\n"
+                message += f"\n{emoji} {account_type}: {amount:,.0f} VND ({percentage:.1f}%)\n"
+
+                # Show categories under this account type
+                if account_type in account_categories:
+                    # Sort categories by amount (descending)
+                    sorted_categories = sorted(
+                        account_categories[account_type].items(),
+                        key=lambda x: -x[1]
+                    )
+
+                    for category, cat_amount in sorted_categories:
+                        cat_percentage = (cat_amount / amount * 100) if amount > 0 else 0
+                        message += f"  └─ {category}: {cat_amount:,.0f} VND ({cat_percentage:.1f}%)\n"
 
         message += f"\n💰 Monthly Summary:\n"
         message += f"• Total Income: {total_income:,.0f} VND\n"
