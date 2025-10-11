@@ -10,8 +10,10 @@ app.register_blueprint(webhook_bp)
 app.register_blueprint(transaction_bp)
 
 if __name__ == '__main__':
+    # This block only runs when executing: python app.py
+    # When using gunicorn, the bot thread is started at module level above
     port = int(os.getenv('PORT', 8080))
-    
+
     print(f"\n{'='*50}")
     print(f"🚀 Budget Tracker API")
     print(f"{'='*50}")
@@ -29,5 +31,6 @@ if __name__ == '__main__':
     print(f"  • Test SePay:    /test")
     print(f"  • Test Email:    /test/email")
     print(f"{'='*50}\n")
-    
+
+    # Run Flask app
     app.run(host='0.0.0.0', port=port, debug=False)
