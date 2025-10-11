@@ -51,6 +51,13 @@ async def list_command(update, context):
 
         print(f"📋 Loaded {len(category_map)} category mappings")
 
+        # Get budget plans (assuming user_id is stored somewhere, using a default for now)
+        # TODO: Get actual user_id from context or environment
+        budget_response = processor.supabase.table("budget_plans").select("category, budget_amount").execute()
+        budget_map = {row["category"]: float(row["budget_amount"]) for row in budget_response.data if row["budget_amount"]} if budget_response.data else {}
+
+        print(f"💵 Loaded {len(budget_map)} budget plans")
+
         # Calculate expenses by account type and category
         account_expenses = {}
         account_categories = {}  # Track categories within each account type
@@ -97,8 +104,6 @@ async def list_command(update, context):
 
             message += "💸 Expenses by Account Type:\n"
             for account_type, amount in sorted_accounts:
-                percentage = (amount / total_expense * 100) if total_expense > 0 else 0
-
                 # Add emoji for each type
                 emoji = {
                     "Need": "🏠",
@@ -106,7 +111,7 @@ async def list_command(update, context):
                     "Invest": "📈"
                 }.get(account_type, "📦")
 
-                message += f"\n{emoji} {account_type}: {amount:,.0f} VND ({percentage:.1f}%)\n"
+                message += f"\n{emoji} {account_type}: {amount:,.0f} VND\n"
 
                 # Show categories under this account type
                 if account_type in account_categories:
@@ -117,8 +122,17 @@ async def list_command(update, context):
                     )
 
                     for category, cat_amount in sorted_categories:
-                        cat_percentage = (cat_amount / amount * 100) if amount > 0 else 0
-                        message += f"  └─ {category}: {cat_amount:,.0f} VND ({cat_percentage:.1f}%)\n"
+                        # Get budget for this category
+                        budget = budget_map.get(category, 0)
+                        remaining = budget - cat_amount
+
+                        if budget > 0:
+                            percentage = (cat_amount / budget * 100) if budget > 0 else 0
+                            message += f"  └─ {category}: {percentage:.1f}%\n"
+                            message += f"     Spent: {cat_amount:,.0f} VND\n"
+                            message += f"     Left: {remaining:,.0f} VND\n"
+                        else:
+                            message += f"  └─ {category}: {cat_amount:,.0f} VND\n"
 
         message += f"\n💰 Monthly Summary:\n"
         message += f"• Total Income: {total_income:,.0f} VND\n"
