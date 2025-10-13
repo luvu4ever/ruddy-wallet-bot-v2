@@ -64,9 +64,11 @@ async def list_command(update, context):
             amount = float(txn.get("transfer_amount", 0))
             transfer_type = txn.get("transfer_type", "in")
 
+            # Map category to account_type
+            account_type = category_map.get(category, "Uncategorized")
+
             if transfer_type == "out":
-                # Map category to account_type
-                account_type = category_map.get(category, "Uncategorized")
+                # Money going out - add to expenses
 
                 # Track account type totals
                 if account_type not in account_expenses:
@@ -82,7 +84,23 @@ async def list_command(update, context):
 
                 total_expense += amount
             else:
-                total_income += amount
+                # Money coming in
+                if category.lower() == "income":
+                    # Pure income - track separately
+                    total_income += amount
+                else:
+                    # Refund/return - reduce expenses for that category
+                    if account_type not in account_expenses:
+                        account_expenses[account_type] = 0
+                        account_categories[account_type] = {}
+
+                    account_expenses[account_type] -= amount
+
+                    if category not in account_categories[account_type]:
+                        account_categories[account_type][category] = 0
+                    account_categories[account_type][category] -= amount
+
+                    total_expense -= amount
 
         # Format response
         message = f"📊 Expense Summary - {now.strftime('%B %Y')}\n\n"
