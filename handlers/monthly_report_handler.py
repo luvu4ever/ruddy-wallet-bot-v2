@@ -9,40 +9,60 @@ import asyncio
 processor = TransactionProcessor()
 
 
-def get_month_range(year, month):
-    """Get start and end dates for a specific month"""
+def get_month_range(year, month, up_to_now=False):
+    """
+    Get start and end dates for a specific month
+
+    Args:
+        year: Year
+        month: Month
+        up_to_now: If True, end date is now() for current month (partial month)
+
+    Returns:
+        tuple: (month_start, month_end) in ISO format
+    """
     month_start = datetime(year, month, 1).isoformat()
 
-    # Calculate next month for end date
-    if month == 12:
-        month_end = datetime(year + 1, 1, 1).isoformat()
+    # If this is current month and up_to_now is True, use current time
+    now = datetime.now()
+    if up_to_now and year == now.year and month == now.month:
+        month_end = now.isoformat()
     else:
-        month_end = datetime(year, month + 1, 1).isoformat()
+        # Calculate next month for end date
+        if month == 12:
+            month_end = datetime(year + 1, 1, 1).isoformat()
+        else:
+            month_end = datetime(year, month + 1, 1).isoformat()
 
     return month_start, month_end
 
 
-def generate_monthly_report(year=None, month=None):
+def generate_monthly_report(year=None, month=None, up_to_now=True):
     """
     Generate monthly spending report
 
     Args:
-        year: Year (defaults to last month)
-        month: Month (defaults to last month)
+        year: Year (defaults to current month)
+        month: Month (defaults to current month)
+        up_to_now: If True, shows data up to current moment for current month (default: True)
 
     Returns:
         dict with report data and formatted message
     """
-    # Default to previous month
+    # Default to current month
     if year is None or month is None:
         now = datetime.now()
-        first_day_this_month = datetime(now.year, now.month, 1)
-        last_day_prev_month = first_day_this_month - timedelta(days=1)
-        year = last_day_prev_month.year
-        month = last_day_prev_month.month
+        year = now.year
+        month = now.month
 
-    month_start, month_end = get_month_range(year, month)
+    month_start, month_end = get_month_range(year, month, up_to_now)
     month_name = datetime(year, month, 1).strftime('%B %Y')
+
+    # Check if this is current month for display
+    now = datetime.now()
+    is_current_month = (year == now.year and month == now.month)
+    if is_current_month and up_to_now:
+        month_name += " (up to now)"
 
     print(f"📊 Generating report for {month_name}")
     print(f"📅 Query range: {month_start} to {month_end}")
@@ -184,12 +204,53 @@ def generate_monthly_report(year=None, month=None):
 
 
 async def summarymonth_command(update, context):
-    """Handle /summarymonth command - show monthly report for previous month"""
+    """
+    Handle /summarymonth command - show monthly report
+
+    Usage:
+        /summarymonth - Current month (up to now)
+        /summarymonth 10/2025 - Specific month
+        /summarymonth 10 - Specific month in current year
+    """
     try:
         print(f"📥 Received /summarymonth command from user")
 
-        # Generate report for previous month
-        report = generate_monthly_report()
+        year = None
+        month = None
+
+        # Parse optional month parameter
+        if context.args and len(context.args) > 0:
+            month_arg = context.args[0]
+
+            try:
+                # Try parsing MM/YYYY format
+                if '/' in month_arg:
+                    parts = month_arg.split('/')
+                    month = int(parts[0])
+                    year = int(parts[1])
+                else:
+                    # Just month number, use current year
+                    month = int(month_arg)
+                    year = datetime.now().year
+
+                # Validate month
+                if month < 1 or month > 12:
+                    await update.message.reply_text("❌ Invalid month. Use 1-12.")
+                    return
+
+                print(f"📅 Requested report for {month}/{year}")
+
+            except (ValueError, IndexError):
+                await update.message.reply_text(
+                    "❌ Invalid format. Use:\n"
+                    "/summarymonth - current month\n"
+                    "/summarymonth 10/2025 - specific month/year\n"
+                    "/summarymonth 10 - month in current year"
+                )
+                return
+
+        # Generate report
+        report = generate_monthly_report(year, month)
 
         if report["success"]:
             await update.message.reply_text(report["message"])
@@ -224,12 +285,21 @@ async def send_telegram_report(message):
 
 
 async def send_monthly_report():
-    """Generate and send monthly report (called by cron)"""
+    """Generate and send monthly report (called by cron on 1st of month)"""
     try:
         print("🚀 Starting monthly report generation...")
 
-        # Generate report for previous month
-        report = generate_monthly_report()
+        # Cron runs on 1st of month, so report on previous month (complete data)
+        now = datetime.now()
+        first_day_this_month = datetime(now.year, now.month, 1)
+        last_day_prev_month = first_day_this_month - timedelta(days=1)
+
+        # Generate report for previous month (complete, not up_to_now)
+        report = generate_monthly_report(
+            year=last_day_prev_month.year,
+            month=last_day_prev_month.month,
+            up_to_now=False  # Full month data since it's already complete
+        )
 
         if report["success"]:
             # Send to Telegram
