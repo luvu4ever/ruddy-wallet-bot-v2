@@ -73,13 +73,26 @@ async def category_command(update, context):
         expenses = []
 
         for txn in response.data:
-            if txn.get("transfer_type") == "out":
-                amount = float(txn.get("transfer_amount", 0))
+            amount = float(txn.get("transfer_amount", 0))
+            transfer_type = txn.get("transfer_type", "in")
+
+            if transfer_type == "out":
+                # Money going out - add to expenses
                 total_spent += amount
                 expenses.append({
                     "date": txn.get("transaction_date"),
                     "amount": amount,
-                    "content": txn.get("content", "")
+                    "content": txn.get("content", ""),
+                    "type": "out"
+                })
+            else:
+                # Money coming in (refund/return) - reduce expenses
+                total_spent -= amount
+                expenses.append({
+                    "date": txn.get("transaction_date"),
+                    "amount": -amount,  # Show as negative to indicate refund
+                    "content": txn.get("content", ""),
+                    "type": "in"
                 })
 
         # Format response
