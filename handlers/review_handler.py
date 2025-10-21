@@ -154,13 +154,9 @@ async def button_callback(update, context):
                 "(Just type and send your message)"
             )
         elif action == "keep":
-            # Skip editing, go to pattern save
-            await ask_pattern_save(update, context)
-
-    # Handle pattern save
-    elif data.startswith("pattern_"):
-        action = data.replace("pattern_", "")
-        await handle_pattern_save(update, context, action == "yes")
+            # Skip editing, move to next transaction
+            state['current_index'] += 1
+            await show_transaction(update, context, edit_message=True)
 
     # Handle actions
     elif data.startswith("action_"):
@@ -280,75 +276,6 @@ async def ask_edit_content(update, context):
     await query.edit_message_text(message, reply_markup=reply_markup)
 
 
-async def ask_pattern_save(update, context):
-    """Ask if user wants to save categorization pattern"""
-    query = update.callback_query
-    state = context.user_data['review_state']
-
-    content = state.get('last_content', '')
-    category = state.get('last_category', '')
-
-    # Extract potential pattern (first word or first few chars)
-    pattern_suggestion = content.split()[0] if content else ''
-    if len(pattern_suggestion) < 3:
-        # If too short, skip pattern save and move to next
-        state['current_index'] += 1
-        await show_transaction(update, context, edit_message=True)
-        return
-
-    message = (
-        f"✅ Categorized as {category}!\n\n"
-        f"💡 Save pattern for future?\n"
-        f'"{pattern_suggestion}" → {category}\n\n'
-        f"This will auto-categorize similar transactions."
-    )
-
-    keyboard = [
-        [
-            InlineKeyboardButton("💾 Yes, Save Pattern", callback_data="pattern_yes"),
-            InlineKeyboardButton("❌ No, Just Once", callback_data="pattern_no"),
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await query.edit_message_text(message, reply_markup=reply_markup)
-
-
-async def handle_pattern_save(update, context, save_pattern):
-    """Handle pattern save decision"""
-    query = update.callback_query
-    state = context.user_data['review_state']
-
-    if save_pattern:
-        content = state.get('last_content', '')
-        category = state.get('last_category', '')
-
-        # Extract pattern (first word)
-        pattern = content.split()[0].lower() if content else ''
-
-        if pattern:
-            # Check if pattern already exists
-            existing = processor.supabase.table("known_receivers").select("*").eq(
-                "receiver_pattern", pattern
-            ).execute()
-
-            if not existing.data or len(existing.data) == 0:
-                # Save new pattern
-                processor.supabase.table("known_receivers").insert({
-                    "receiver_pattern": pattern,
-                    "category": category,
-                    "new_content": None
-                }).execute()
-
-                print(f"💾 Saved pattern: {pattern} → {category}")
-            else:
-                print(f"ℹ️ Pattern {pattern} already exists")
-
-    # Move to next transaction
-    state['current_index'] += 1
-    await show_transaction(update, context, edit_message=True)
-
-
 async def handle_content_input(update, context):
     """Handle text message when user is editing content"""
     state = context.user_data.get('review_state')
@@ -378,16 +305,11 @@ async def handle_content_input(update, context):
     state['last_content'] = new_content
     state['waiting_for_content'] = False
 
-    # Show confirmation and move to pattern save
+    # Show confirmation and move to next transaction
     await update.message.reply_text(
-        f"✅ Content updated to:\n📝 {new_content}\n\nProcessing..."
+        f"✅ Content updated to:\n📝 {new_content}"
     )
 
-    # Ask about pattern save
-    # Need to create a fake query object for ask_pattern_save
-    class FakeQuery:
-        async def edit_message_text(self, text, reply_markup=None):
-            await update.message.reply_text(text, reply_markup=reply_markup)
-
-    fake_update = type('obj', (object,), {'callback_query': FakeQuery()})()
-    await ask_pattern_save(fake_update, context)
+    # Move to next transaction
+    state['current_index'] += 1
+    await show_transaction(update, context)
