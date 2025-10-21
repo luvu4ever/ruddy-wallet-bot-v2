@@ -6,13 +6,6 @@
   "deploy": {
     "startCommand": "bash start.sh",
     "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 10,
-    "cronJobs": [
-      {
-        "name": "Monthly Budget Report",
-        "schedule": "0 9 1 * *",
-        "command": "curl -X POST https://$RAILWAY_PUBLIC_DOMAIN/cron/monthly-report -H 'Authorization: Bearer $CRON_API_KEY'"
-      }
-    ]
+    "restartPolicyMaxRetries": 10
   }
 }

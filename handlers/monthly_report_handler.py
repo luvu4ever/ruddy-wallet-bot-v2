@@ -1,7 +1,8 @@
 import os
 from datetime import datetime, timedelta
 from transaction import TransactionProcessor
-import requests
+from telegram import Bot
+import asyncio
 
 
 # Initialize processor
@@ -203,7 +204,7 @@ async def summarymonth_command(update, context):
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
 
-def send_telegram_report(message):
+async def send_telegram_report(message):
     """Send report via Telegram to configured chat"""
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
@@ -212,15 +213,9 @@ def send_telegram_report(message):
         print("❌ TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set")
         return False
 
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": message
-    }
-
     try:
-        response = requests.post(url, json=payload, timeout=10)
-        response.raise_for_status()
+        bot = Bot(token=token)
+        await bot.send_message(chat_id=chat_id, text=message)
         print(f"✅ Report sent to Telegram successfully")
         return True
     except Exception as e:
@@ -228,7 +223,7 @@ def send_telegram_report(message):
         return False
 
 
-def send_monthly_report():
+async def send_monthly_report():
     """Generate and send monthly report (called by cron)"""
     try:
         print("🚀 Starting monthly report generation...")
@@ -238,7 +233,7 @@ def send_monthly_report():
 
         if report["success"]:
             # Send to Telegram
-            send_telegram_report(report["message"])
+            await send_telegram_report(report["message"])
 
             print(f"✅ Monthly report completed for {report['month']}")
             return report
@@ -255,6 +250,6 @@ def send_monthly_report():
 
 if __name__ == "__main__":
     # Test the report generation
-    report = send_monthly_report()
+    report = asyncio.run(send_monthly_report())
     if report:
         print("\n" + report["message"])

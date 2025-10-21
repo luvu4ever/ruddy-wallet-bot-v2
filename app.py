@@ -1,5 +1,5 @@
 from flask import Flask
-from routes import webhook_bp, transaction_bp, cron_bp
+from routes import webhook_bp, transaction_bp
 import os
 
 # Initialize Flask app
@@ -8,7 +8,6 @@ app = Flask(__name__)
 # Register blueprints
 app.register_blueprint(webhook_bp)
 app.register_blueprint(transaction_bp)
-app.register_blueprint(cron_bp)
 
 if __name__ == '__main__':
     # This block only runs when executing: python app.py
@@ -31,9 +30,6 @@ if __name__ == '__main__':
     print(f"  • Health:        /health")
     print(f"  • Test SePay:    /test")
     print(f"  • Test Email:    /test/email")
-    print(f"\n⏰ Cron Jobs:")
-    print(f"  • Monthly Report: /cron/monthly-report")
-    print(f"  • Test Cron:      /cron/test")
     print(f"{'='*50}\n")
 
     # Run Flask app
