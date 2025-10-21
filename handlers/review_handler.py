@@ -1,6 +1,7 @@
 from datetime import datetime
 from transaction import TransactionProcessor
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import filters
 
 
 # Initialize processor
@@ -12,11 +13,11 @@ async def review_command(update, context):
     try:
         print(f"📥 Received /review command from user")
 
-        # Fetch uncategorized transactions
+        # Fetch uncategorized transactions (null, empty, or "Uncategorized")
         response = processor.supabase.table("transactions").select(
             "*"
-        ).is_(
-            "category", "null"
+        ).or_(
+            "category.is.null,category.eq.,category.eq.Uncategorized"
         ).order(
             "transaction_date", desc=True
         ).limit(50).execute()
@@ -142,6 +143,20 @@ async def button_callback(update, context):
         category = data.replace("cat_", "")
         await categorize_transaction(update, context, category)
 
+    # Handle content edit
+    elif data.startswith("content_"):
+        action = data.replace("content_", "")
+        if action == "edit":
+            # Ask user to send new content
+            state['waiting_for_content'] = True
+            await query.edit_message_text(
+                "✏️ Please send the new content for this transaction:\n\n"
+                "(Just type and send your message)"
+            )
+        elif action == "keep":
+            # Skip editing, go to pattern save
+            await ask_pattern_save(update, context)
+
     # Handle pattern save
     elif data.startswith("pattern_"):
         action = data.replace("pattern_", "")
@@ -231,12 +246,38 @@ async def categorize_transaction(update, context, category):
 
     print(f"✅ Categorized transaction {txn['id']} as {category}")
 
-    # Store categorization info for pattern save prompt
+    # Store categorization info
     state['last_category'] = category
     state['last_content'] = txn.get('content', '')
 
-    # Ask about pattern saving
-    await ask_pattern_save(update, context)
+    # Ask if user wants to edit content
+    await ask_edit_content(update, context)
+
+
+async def ask_edit_content(update, context):
+    """Ask if user wants to edit transaction content"""
+    query = update.callback_query
+    state = context.user_data['review_state']
+
+    current_content = state.get('last_content', '')
+    category = state.get('last_category', '')
+
+    message = (
+        f"✅ Categorized as {category}!\n\n"
+        f"Current content:\n"
+        f"📝 {current_content}\n\n"
+        f"Do you want to edit the content?"
+    )
+
+    keyboard = [
+        [
+            InlineKeyboardButton("✏️ Edit Content", callback_data="content_edit"),
+            InlineKeyboardButton("⏭️ Keep & Continue", callback_data="content_keep"),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.edit_message_text(message, reply_markup=reply_markup)
 
 
 async def ask_pattern_save(update, context):
@@ -306,3 +347,47 @@ async def handle_pattern_save(update, context, save_pattern):
     # Move to next transaction
     state['current_index'] += 1
     await show_transaction(update, context, edit_message=True)
+
+
+async def handle_content_input(update, context):
+    """Handle text message when user is editing content"""
+    state = context.user_data.get('review_state')
+
+    # Check if we're waiting for content input
+    if not state or not state.get('waiting_for_content'):
+        return  # Not in review mode or not waiting for input
+
+    # Get the new content
+    new_content = update.message.text.strip()
+
+    if not new_content:
+        await update.message.reply_text("❌ Content cannot be empty. Please send the new content:")
+        return
+
+    # Update transaction content
+    current_index = state['current_index']
+    txn = state['transactions'][current_index]
+
+    processor.supabase.table("transactions").update({
+        "content": new_content
+    }).eq("id", txn['id']).execute()
+
+    print(f"✏️ Updated content for transaction {txn['id']}: {new_content}")
+
+    # Update state
+    state['last_content'] = new_content
+    state['waiting_for_content'] = False
+
+    # Show confirmation and move to pattern save
+    await update.message.reply_text(
+        f"✅ Content updated to:\n📝 {new_content}\n\nProcessing..."
+    )
+
+    # Ask about pattern save
+    # Need to create a fake query object for ask_pattern_save
+    class FakeQuery:
+        async def edit_message_text(self, text, reply_markup=None):
+            await update.message.reply_text(text, reply_markup=reply_markup)
+
+    fake_update = type('obj', (object,), {'callback_query': FakeQuery()})()
+    await ask_pattern_save(fake_update, context)

@@ -1,5 +1,5 @@
 import os
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from telegram.error import Conflict
 import sys
 import time
@@ -7,7 +7,7 @@ import time
 from handlers.list_handler import list_command
 from handlers.category_handler import category_command
 from handlers.monthly_report_handler import summarymonth_command
-from handlers.review_handler import review_command, button_callback
+from handlers.review_handler import review_command, button_callback, handle_content_input
 
 
 def main():
@@ -29,6 +29,9 @@ def main():
 
         # Add callback handler for button interactions
         application.add_handler(CallbackQueryHandler(button_callback))
+
+        # Add message handler for content editing (must be after commands)
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_content_input))
 
         # Start bot
         print("🤖 Starting Budget Tracker Bot...")
