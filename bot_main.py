@@ -6,6 +6,7 @@ import time
 
 from handlers.list_handler import list_command
 from handlers.category_handler import category_command
+from handlers.monthly_report_handler import summarymonth_command
 
 
 def main():
@@ -22,10 +23,11 @@ def main():
         # Add command handlers
         application.add_handler(CommandHandler("list", list_command))
         application.add_handler(CommandHandler("category", category_command))
+        application.add_handler(CommandHandler("summarymonth", summarymonth_command))
 
         # Start bot
         print("🤖 Starting Budget Tracker Bot...")
-        print("📊 Commands: /list, /category")
+        print("📊 Commands: /list, /category, /summarymonth")
         print("🚀 Bot is running!")
 
         application.run_polling()
