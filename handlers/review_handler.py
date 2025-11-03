@@ -77,7 +77,9 @@ async def show_transaction(update, context, edit_message=False):
     txn = transactions[current_index]
 
     # Format transaction details
-    txn_date = datetime.fromisoformat(txn['transaction_date'].replace('Z', '+00:00')).strftime('%b %d, %Y')
+    txn_datetime = datetime.fromisoformat(txn['transaction_date'].replace('Z', '+00:00'))
+    txn_date = txn_datetime.strftime('%b %d, %Y')
+    txn_time = txn_datetime.strftime('%H:%M')
     amount = f"{float(txn['transfer_amount']):,.0f} VND"
     transfer_type = "💸 Out" if txn['transfer_type'] == 'out' else "💰 In"
     content = txn.get('content', 'No description')
@@ -86,7 +88,7 @@ async def show_transaction(update, context, edit_message=False):
     message = (
         f"📊 Uncategorized Review ({current_index + 1}/{total})\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"📅 {txn_date}\n"
+        f"📅 {txn_date} {txn_time}\n"
         f"{transfer_type} {amount}\n"
         f"📝 {content}\n"
         f"🏦 {account}\n\n"
@@ -217,9 +219,14 @@ async def show_categories(update, context, account_type):
     total = state['total']
     txn = state['transactions'][current_index]
 
+    txn_datetime = datetime.fromisoformat(txn['transaction_date'].replace('Z', '+00:00'))
+    txn_date = txn_datetime.strftime('%b %d, %Y')
+    txn_time = txn_datetime.strftime('%H:%M')
+
     message = (
         f"📊 Uncategorized Review ({current_index + 1}/{total})\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📅 {txn_date} {txn_time}\n"
         f"💰 {float(txn['transfer_amount']):,.0f} VND\n"
         f"📝 {txn.get('content', 'No description')}\n\n"
         f"Select category in {account_type}:"
